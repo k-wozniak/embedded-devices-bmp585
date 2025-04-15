@@ -25,7 +25,7 @@ paste = "1.0.15"
 uom = { version = "0.36.0", features = ["f32", "f64", "si", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "rational32", "rational64"], default-features = false }
 
 [features]
-default = ["sync", "async"]
+default = ["sync", "async", "bosch-bmp585", "bosch-bmp390"]
 
 sync = ["embedded-registers/sync"]
 async = ["dep:embedded-hal-async", "embedded-registers/async"]
@@ -40,6 +40,7 @@ analog_devices-max31865 = []
 bosch-bme280 = []
 bosch-bmp280 = ["bosch-bme280"]
 bosch-bmp390 = []
+bosch-bmp585 = []
 
 # Microchip
 microchip-mcp9808 = []
