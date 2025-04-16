@@ -31,7 +31,7 @@ pub struct RevId {
     pub revision: u8,
 }
 
-/// Host Interface Mode for BMP585
+/// Host Interface Mode.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
@@ -182,11 +182,11 @@ pub struct FifoConfig {
     pub reserved: u8,
 }
 
-/// FIFO frame count register (0x17).
+/// FIFO frame count register.
 /// Indicates the number of data frames currently stored in the FIFO buffer.
 #[device_register(super::BMP585)]
 #[register(address = 0x17, mode = "r")]
-#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 1)]
+#[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct FifoCount {
     /// Reserved bits [7:6].
     #[bondrewd(bit_length = 2, reserve)]
@@ -315,7 +315,7 @@ pub struct Status {
     pub reserved1: u8,
 }
 
-/// The FIFO output data register (0x29).
+/// The FIFO output data register.
 /// Data is read-only. This register is read repeatedly in a burst to obtain full FIFO frames.
 /// If FIFO is empty, 0x7F is returned.
 #[device_register(super::BMP585)]
@@ -483,7 +483,7 @@ pub enum Oversampling {
     X128 = 7,
 }
 
-/// Over-sampling rate (OSR) configuration register (0x36).
+/// Over-sampling rate (OSR) configuration register.
 /// Configures the oversampling rates for temperature and pressure measurements.
 /// Note: The configured ODR might be invalid in combination with OSR configuration.
 /// This can be checked via the `odr_is_valid` flag in the `OsrEffective` register (0x38).
