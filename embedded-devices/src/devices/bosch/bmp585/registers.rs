@@ -276,7 +276,7 @@ pub struct InterruptStatus {
 
     /// Power-on-reset or soft reset has occurred
     #[register(default = false)]
-    pub por_or_reset: bool,
+    pub reset_occurred: bool,
 
     /// Reserved bits [7:5]
     #[bondrewd(bit_length = 3, reserve)]
@@ -473,7 +473,7 @@ pub enum Oversampling {
     /// If this is used as the pressure oversampling rate, it is recommended to also use
     /// at least 2x temperature oversampling to get accurate compensation.
     X64 = 6,
-        /// Configures 32x oversampling.
+    /// Configures 32x oversampling.
     /// If this is used as the pressure oversampling rate, it is recommended to also use
     /// at least 2x temperature oversampling to get accurate compensation.
     X128 = 7,
@@ -487,12 +487,12 @@ pub struct OversamplingConfig {
     /// Temperature oversampling rate (OSR_T) selection.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
     #[register(default = Oversampling::X1)]
-    pub osr_t: Oversampling,
+    pub temperature: Oversampling,
 
     /// Pressure oversampling rate (OSR_P) selection.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
     #[register(default = Oversampling::X1)]
-    pub osr_p: Oversampling,
+    pub pressure: Oversampling,
 
     /// Pressure measurement enable.
     /// If set (true), enables sensor pressure measurements.
@@ -606,7 +606,7 @@ pub struct OdrConfig {
     pub pwr_mode: PowerMode,
 
     /// Output data rate (ODR) selection.
-    /// Note: the configured ODR might be invalid in combination with OSR 
+    /// Note: the configured ODR might be invalid in combination with OSR
     /// configuration This is observable with the flag odr_is_valid.
     /// If configured ODR/OSR settings are invalid, default OSR settings will be used.
     /// The effective OSR settings for P/T can be read from osr_t_eff and osr_p_eff.
