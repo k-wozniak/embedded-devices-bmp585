@@ -46,7 +46,7 @@ pub enum HifMode {
     AutoConfig = 0b11,
 }
 
-/// The ASIC status register (0x11).
+/// The ASIC status register.
 /// Provides host interface mode and I3C error flags.
 #[device_register(super::BMP585)]
 #[register(address = 0x11, mode = "r")]
@@ -99,7 +99,7 @@ pub enum IntOutput {
 pub struct InterruptConfig {
     /// Interrupt mode.
     #[bondrewd(enum_primitive = "u8", bit_length = 1)]
-    #[register(default = IntMode::Pulsed)]
+    #[register(default = IntMode::Latched)]
     pub mode: IntMode,
 
     /// Interrupt pin polarity.
@@ -109,7 +109,7 @@ pub struct InterruptConfig {
 
     /// Interrupt pin configuration.
     #[bondrewd(enum_primitive = "u8", bit_length = 1)]
-    #[register(default = IntOutput::PushPull)]
+    #[register(default = IntOutput::OpenDrain)]
     pub pin: IntOutput,
 
     /// Interrupt enabling.
@@ -120,7 +120,8 @@ pub struct InterruptConfig {
     /// Pad drive strength for INT (MSB should be set in INT open drain config only.)
     /// Note: these register fields should be read-back only after waiting at least 1 μs after they have been written.
     #[bondrewd(bit_length = 4)]
-    pub pad_drive_strengt: u8,
+    #[register(default = 0x3)]
+    pub pad_drive_strength: u8,
 }
 
 /// Interrupt source selection register.
@@ -238,7 +239,7 @@ pub struct FifoSelect {
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
 pub struct Temperature {
     #[bondrewd(bit_length = 24)]
-    #[register(default = 0)]
+    #[register(default = 0x7FFFFF)]
     pub temperature: u32, // Interpreted as signed 24-bit, shifted by 16
 }
 
@@ -248,7 +249,7 @@ pub struct Temperature {
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
 pub struct Pressure {
     #[bondrewd(bit_length = 24)]
-    #[register(default = 0)]
+    #[register(default = 0x7FFFFF)]
     pub pressure: u32, // Interpreted as signed 24-bit, shifted by 6
 }
 
@@ -294,7 +295,7 @@ pub struct Status {
     pub reserved0: u8,
 
     /// If asserted, device is ready for NVM operations.
-    #[register(default = false)]
+    #[register(default = true)]
     pub nvm_ready: bool,
 
     /// If asserted, indicates an NVM error, due to at least one of the following reasons:
@@ -337,7 +338,7 @@ pub struct DspConfig {
     pub reserved_0_1: u8,
 
     /// If set, IIR filter flush is triggered in FORCED mode.
-    #[register(default = true)]
+    #[register(default = false)]
     pub iir_flush_forced_en: bool,
 
     /// Shadow register temperature value selection: before or after IIR filter.
@@ -617,8 +618,8 @@ pub struct OdrConfig {
     /// configuration This is observable with the flag odr_is_valid.
     /// If configured ODR/OSR settings are invalid, default OSR settings will be used.
     /// The effective OSR settings for P/T can be read from osr_t_eff and osr_p_eff.
-    #[bondrewd(bit_length = 5)]
-    #[register(default = 0x0E)]
+    #[bondrewd(enum_primitive = "u8", bit_length = 5)]
+    #[register(default = DataRateHz::Hz1)]
     pub odr: DataRateHz,
 
     /// Disables deep standby
@@ -680,6 +681,6 @@ pub enum Cmd {
 pub struct Command {
     /// Command to be executed.
     #[bondrewd(enum_primitive = "u8", bit_length = 8)]
-    #[register(default = Cmd::Nop)]
+    #[register(default = Cmd::NoCmd)]
     pub command: Cmd,
 }
