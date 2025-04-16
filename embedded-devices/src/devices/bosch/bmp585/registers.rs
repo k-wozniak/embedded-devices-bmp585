@@ -2,17 +2,17 @@ use bondrewd::BitfieldEnum;
 use embedded_devices_derive::device_register;
 use embedded_registers::register;
 
-/// Known chip ids
+/// Known chip IDs.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 pub enum Chip {
     BMP585 = 0x51,
-    /// Unknown chip id.
+    /// Unknown chip ID.
     Invalid(u8),
 }
 
-/// The chip identification register.
+/// Chip identification register.
 #[device_register(super::BMP585)]
 #[register(address = 0x01, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -22,7 +22,7 @@ pub struct ChipId {
     pub chip: Chip,
 }
 
-/// The chip revision register.
+/// Chip revision register.
 #[device_register(super::BMP585)]
 #[register(address = 0x02, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -46,8 +46,7 @@ pub enum HifMode {
     AutoConfig = 0b11,
 }
 
-/// The ASIC status register.
-/// Provides host interface mode and I3C error flags.
+/// ASIC status register.
 #[device_register(super::BMP585)]
 #[register(address = 0x11, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -71,6 +70,7 @@ pub struct AsicStatus {
     pub reserved: u8,
 }
 
+/// Interrupt mode selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 pub enum IntMode {
@@ -78,6 +78,7 @@ pub enum IntMode {
     Latched = 1,
 }
 
+/// Interrupt pin polarity selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 pub enum IntPolarity {
@@ -85,6 +86,7 @@ pub enum IntPolarity {
     ActiveHigh = 1,
 }
 
+/// Interrupt pin output configuration.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 pub enum IntOutput {
@@ -92,7 +94,7 @@ pub enum IntOutput {
     OpenDrain = 1,
 }
 
-/// Interrupt config
+/// Interrupt configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x14, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -125,7 +127,6 @@ pub struct InterruptConfig {
 }
 
 /// Interrupt source selection register.
-/// If 0x00: Disable INT. Except the POR and Software_reset completion
 #[device_register(super::BMP585)]
 #[register(address = 0x15, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -161,7 +162,7 @@ pub enum FifoMode {
     StopOnFull = 1,
 }
 
-/// FIFO configuration register
+/// FIFO configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x16, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -183,7 +184,6 @@ pub struct FifoConfig {
 }
 
 /// FIFO frame count register.
-/// Indicates the number of data frames currently stored in the FIFO buffer.
 #[device_register(super::BMP585)]
 #[register(address = 0x17, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -199,7 +199,7 @@ pub struct FifoCount {
     pub fifo_count: u8,
 }
 
-/// FIFO frame type selection
+/// FIFO frame type selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
@@ -216,7 +216,7 @@ pub enum FifoFrameType {
     Invalid(u8),
 }
 
-/// FIFO selection configuration.
+/// FIFO selection configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x18, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -233,7 +233,7 @@ pub struct FifoSelect {
     pub reserved: u8,
 }
 
-/// Temperature registers.
+/// Temperature data registers.
 #[device_register(super::BMP585)]
 #[register(address = 0x1D, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
@@ -243,7 +243,7 @@ pub struct Temperature {
     pub temperature: u32, // Interpreted as signed 24-bit, shifted by 16
 }
 
-/// Pressure registers.
+/// Pressure data registers.
 #[device_register(super::BMP585)]
 #[register(address = 0x20, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
@@ -254,7 +254,6 @@ pub struct Pressure {
 }
 
 /// Interrupt status register.
-/// All flags are clear-on-read and represent currently active interrupt conditions.
 #[device_register(super::BMP585)]
 #[register(address = 0x27, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -315,9 +314,7 @@ pub struct Status {
     pub reserved1: u8,
 }
 
-/// The FIFO output data register.
-/// Data is read-only. This register is read repeatedly in a burst to obtain full FIFO frames.
-/// If FIFO is empty, 0x7F is returned.
+/// FIFO output data register.
 #[device_register(super::BMP585)]
 #[register(address = 0x29, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -327,7 +324,7 @@ pub struct FifoData {
     pub fifo_data: u8,
 }
 
-/// DSP configuration register for IIR selection and filter behaviour.
+/// DSP configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x30, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -362,7 +359,7 @@ pub struct DspConfig {
     pub oor_sel_iir_p: bool,
 }
 
-/// IIR filter coefficient for pressure and temperature.
+/// IIR filter coefficient selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 pub enum IIRFilter {
@@ -384,7 +381,7 @@ pub enum IIRFilter {
     Coefficient127 = 0b111,
 }
 
-/// DSP IIR filter configuration register
+/// DSP IIR filter configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x31, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -405,7 +402,7 @@ pub struct IIRFilterConfig {
     pub reserved: u8,
 }
 
-/// Out-of-range (OOR) threshold for pressure.
+/// Out-of-range (OOR) pressure threshold registers.
 #[device_register(super::BMP585)]
 #[register(address = 0x32, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 2)]
@@ -416,7 +413,7 @@ pub struct OorThresholdPressure {
     pub oor_threshold_pascals: u16,
 }
 
-/// Out-of-range (OOR) range for pressure.
+/// Out-of-range (OOR) pressure range register.
 #[device_register(super::BMP585)]
 #[register(address = 0x34, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -427,7 +424,6 @@ pub struct OorRange {
 }
 
 /// Out-of-range (OOR) configuration register.
-/// Configures the behaviour of the out-of-range pressure detection.
 #[device_register(super::BMP585)]
 #[register(address = 0x35, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -453,7 +449,7 @@ pub struct OorConfig {
     pub cnt_lim: u8,
 }
 
-/// Oversampling rate
+/// Oversampling rate selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 pub enum Oversampling {
@@ -484,11 +480,6 @@ pub enum Oversampling {
 }
 
 /// Over-sampling rate (OSR) configuration register.
-/// Configures the oversampling rates for temperature and pressure measurements.
-/// Note: The configured ODR might be invalid in combination with OSR configuration.
-/// This can be checked via the `odr_is_valid` flag in the `OsrEffective` register (0x38).
-/// If the configuration is invalid, default OSR settings will be used.
-/// The effective OSR settings can be read from `osr_t_eff` and `osr_p_eff` in `OsrEffective`.
 #[device_register(super::BMP585)]
 #[register(address = 0x36, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -514,6 +505,7 @@ pub struct OversamplingConfig {
     pub reserved: u8,
 }
 
+/// Power mode selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
@@ -603,7 +595,7 @@ pub enum DataRateHz {
     Hz0_125 = 0x1F,
 }
 
-/// Output data rate (ODR) configuration.
+/// Output data rate (ODR) configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x37, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -627,6 +619,7 @@ pub struct OdrConfig {
     pub deep_dis: bool,
 }
 
+/// Effective over-sampling rate (OSR) register.
 #[device_register(super::BMP585)]
 #[register(address = 0x38, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
@@ -651,6 +644,7 @@ pub struct OsrEffective {
     pub odr_is_valid: bool,
 }
 
+/// Command selection.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
@@ -674,7 +668,7 @@ pub enum Cmd {
     Invalid(u8),
 }
 
-/// Command Register.
+/// Command register.
 #[device_register(super::BMP585)]
 #[register(address = 0x7E, mode = "w")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
