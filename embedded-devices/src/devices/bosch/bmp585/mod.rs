@@ -1,9 +1,9 @@
 //! # BMP585
 //!
-//! The BMP585 is a high-performance barometric pressure sensor from Bosch Sensortec. It provides absolute pressure and
-//! temperature measurements with outstanding accuracy and ultra-low noise. It is housed in a compact 8-pin metal-lid LGA
-//! package (3.25 × 3.25 mm², max height 1.96 mm), designed for applications like indoor navigation, drones, wearables,
-//! and outdoor sports equipment.
+//! The BMP585 is a high-performance barometric pressure sensor from Bosch Sensortec.
+//! It provides absolute pressure and temperature measurements with outstanding accuracy and ultra-low noise.
+//! It is housed in a compact 8-pin metal-lid LGA package (3.25 × 3.25 mm², max height 1.96 mm),
+//! designed for applications like indoor navigation, drones, wearables, and outdoor sports equipment.
 //!
 //! ## Features
 //!
