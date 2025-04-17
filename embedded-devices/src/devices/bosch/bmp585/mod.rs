@@ -1,3 +1,89 @@
+//! # BMP585
+//!
+//! The BMP585 is a high-performance barometric pressure sensor from Bosch Sensortec. It provides absolute pressure and
+//! temperature measurements with outstanding accuracy and ultra-low noise. It is housed in a compact 8-pin metal-lid LGA
+//! package (3.25 × 3.25 mm², max height 1.96 mm), designed for applications like indoor navigation, drones, wearables,
+//! and outdoor sports equipment.
+//!
+//! ## Features
+//!
+//! - Absolute pressure range: 30 … 125 kPa
+//! - Temperature range: -40 … +85 °C
+//! - Relative pressure accuracy: ±6 Pa (typ)
+//! - Absolute pressure accuracy: ±30 Pa (typ)
+//! - Low noise: down to 0.08 Pa RMS with high oversampling
+//! - Power-efficient: down to 1.3 μA at 1 Hz (lowest power mode)
+//! - Configurable IIR filter, FIFO buffer, and interrupt functionality
+//! - Supported interfaces: I²C, SPI (3- or 4-wire)
+//!
+//! ## Current Implementation Status
+//!
+//! ✅ Implemented:
+//! - I²C and SPI (4-wire) communication
+//! - Basic initialization and configuration
+//! - Temperature and pressure measurement
+//! - Support for configurable oversampling and IIR filter
+//! - Power modes (Standby, Forced, Normal, Continuous)
+//!
+//! ⚠️ Not yet implemented:
+//! - FIFO readout and configuration
+//! - Advanced interrupt configuration (data ready, threshold, out-of-range, FIFO full)
+//! - Register paging (only default page 0 is currently supported)
+//! - NVM read/write
+//! - I3C interface
+//! - Out-of-range detection
+//!
+//! ## Usage (sync)
+//!
+//! ```rust, only_if(sync)
+//! # fn example<I, D>(i2c: I, mut delay: D) -> Result<(), embedded_devices::devices::bosch::bmp585::Error<I::Error>>
+//! # where
+//! #   I: embedded_hal::i2c::I2c + embedded_hal::i2c::ErrorType,
+//! #   D: embedded_hal::delay::DelayNs
+//! # {
+//! use embedded_devices::devices::bosch::bmp585::{BMP585Sync, address::Address, Configuration};
+//! use uom::si::thermodynamic_temperature::degree_celsius;
+//! use uom::num_traits::ToPrimitive;
+//!
+//! let config = Configuration::default();
+//! let mut bmp585 = BMP585Sync::new_i2c(i2c, Address::Primary, config);
+//! bmp585.init(&mut delay)?;
+//!
+//! let data = bmp585.measure(&mut delay)?;
+//! let temp_c = data.temperature.get::<degree_celsius>().to_f32();
+//! println!("Temperature: {} °C", temp_c);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Usage (async)
+//!
+//! ```rust, only_if(async)
+//! # async fn example<I, D>(i2c: I, mut delay: D) -> Result<(), embedded_devices::devices::bosch::bmp585::Error<I::Error>>
+//! # where
+//! #   I: embedded_hal_async::i2c::I2c + embedded_hal_async::i2c::ErrorType,
+//! #   D: embedded_hal_async::delay::DelayNs
+//! # {
+//! use embedded_devices::devices::bosch::bmp585::{BMP585Async, address::Address, Configuration};
+//! use uom::si::thermodynamic_temperature::degree_celsius;
+//! use uom::num_traits::ToPrimitive;
+//!
+//! let config = Configuration::default();
+//! let mut bmp585 = BMP585Async::new_i2c(i2c, Address::Primary, config);
+//! bmp585.init(&mut delay).await?;
+//!
+//! let data = bmp585.measure(&mut delay).await?;
+//! let temp_c = data.temperature.get::<degree_celsius>().to_f32();
+//! println!("Temperature: {} °C", temp_c);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Notes
+//! - Ensure you call `init()` after creating the driver to reset and configure the sensor.
+//! - Measurements in Standby mode trigger a one-shot Forced mode conversion.
+//! - Use appropriate oversampling settings for your accuracy vs power tradeoff.
+
 use embedded_devices_derive::{device, device_impl};
 use uom::num_rational::Rational32;
 use uom::si::pressure::pascal;
@@ -26,6 +112,8 @@ pub enum Error<BusError> {
     BadStatus,
     /// NVM data copy is still in progress.
     ResetFailed,
+    /// Invalid OSR/ODR configuration.
+    InvalidConfig,
 }
 
 // TODO: Add docs
@@ -63,8 +151,10 @@ pub struct Configuration {
     pub temperature_oversampling: Oversampling,
     /// The oversampling rate for pressure mesurements
     pub pressure_oversampling: Oversampling,
-    /// The iir filter to use
-    pub iir_filter: IIRFilter,
+    /// Pressure IIR filter to use
+    pub pressure_iir: IIRFilter,
+    /// Temperature IIR filter to use
+    pub temperature_iir: IIRFilter,
 }
 
 impl Default for Configuration {
@@ -73,7 +163,8 @@ impl Default for Configuration {
             odr: OdrConfig::default(),
             temperature_oversampling: Oversampling::X1,
             pressure_oversampling: Oversampling::X1,
-            iir_filter: IIRFilter::Disabled,
+            pressure_iir: IIRFilter::Disabled,
+            temperature_iir: IIRFilter::Disabled,
         }
     }
 }
@@ -180,7 +271,6 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
         self.write_register(self::registers::Command::default().with_command(Cmd::Reset))
             .await
             .map_err(Error::Bus)?;
-        delay.delay_ms(10).await;
 
         // Table 4 & 4.3.10 specify to wait 2 ms after soft reset.
         delay.delay_ms(2).await;
@@ -216,14 +306,20 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
 
         self.write_register(
             IIRFilterConfig::default()
-                .with_pressure_iir(config.iir_filter)
-                .with_temperature_iir(config.iir_filter), // todo: Separate.
+                .with_pressure_iir(config.pressure_iir)
+                .with_temperature_iir(config.temperature_iir),
         )
         .await
         .map_err(Error::Bus)?;
 
         // Set the power mode.
         self.write_register(config.odr).await.map_err(Error::Bus)?;
+
+        // Check if OSR-ODR configuration is valid.
+        let eff = self.read_register::<OsrEffective>().await.map_err(Error::Bus)?;
+        if !eff.read_odr_is_valid() {
+            return Err(Error::InvalidConfig);
+        }
 
         Ok(())
     }
@@ -258,21 +354,13 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
 
     async fn normal_read(&mut self) -> Result<Measurements, Error<I::Error>> {
         // Read the latest available data.
-        let temperature = self
-            .read_register::<registers::Temperature>()
+        let raw = self
+            .read_register::<registers::Measurement>()
             .await
-            .map_err(Error::Bus)?
-            .read_temperature();
+            .map_err(Error::Bus)?;
 
-        let temperature = Rational32::new_raw(temperature as i32, 1 << 16);
-
-        let pressure = self
-            .read_register::<registers::Pressure>()
-            .await
-            .map_err(Error::Bus)?
-            .read_pressure();
-
-        let pressure = Rational32::new_raw(pressure as i32, 1 << 6);
+        let temperature = Rational32::new_raw(raw.read_temperature() as i32, 1 << 16);
+        let pressure = Rational32::new_raw(raw.read_pressure() as i32, 1 << 6);
 
         Ok(Measurements {
             temperature: ThermodynamicTemperature::new::<degree_celsius>(temperature),

@@ -2,6 +2,8 @@ use bondrewd::BitfieldEnum;
 use embedded_devices_derive::device_register;
 use embedded_registers::register;
 
+use super::Measurements;
+
 /// Known chip IDs.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
@@ -233,21 +235,19 @@ pub struct FifoSelect {
     pub reserved: u8,
 }
 
-/// Temperature data registers.
+/// Combined Temperature and Pressure data registers.
+/// Reads 6 bytes starting from the temperature address (0x1D).
+/// This ensures correct shadowing, otherwise, inconsistent data may result.
 #[device_register(super::BMP585)]
 #[register(address = 0x1D, mode = "r")]
-#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
-pub struct Temperature {
+#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 6)]
+pub struct Measurement {
+    /// Temperature data (LSB first).
     #[bondrewd(bit_length = 24)]
     #[register(default = 0x7FFFFF)]
     pub temperature: u32, // Interpreted as signed 24-bit, shifted by 16
-}
 
-/// Pressure data registers.
-#[device_register(super::BMP585)]
-#[register(address = 0x20, mode = "r")]
-#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
-pub struct Pressure {
+    /// Pressure data (LSB first).
     #[bondrewd(bit_length = 24)]
     #[register(default = 0x7FFFFF)]
     pub pressure: u32, // Interpreted as signed 24-bit, shifted by 6
