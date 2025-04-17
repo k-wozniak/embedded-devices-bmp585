@@ -38,6 +38,9 @@ pub enum Error<BusError> {
 pub struct BMP585<I: embedded_registers::RegisterInterface> {
     /// The interface to communicate with the device
     interface: I,
+
+    /// The configuration the sensor should use during the init.
+    config: Configuration,
 }
 
 /// Measurement data
@@ -54,6 +57,8 @@ pub struct Measurements {
 /// and use no IIR filter.
 #[derive(Debug, Clone)]
 pub struct Configuration {
+    /// Output data rate configuration and type
+    pub odr: OdrConfig,
     /// The oversampling rate for temperature mesurements
     pub temperature_oversampling: Oversampling,
     /// The oversampling rate for pressure mesurements
@@ -65,6 +70,7 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
+            odr: OdrConfig::default(),
             temperature_oversampling: Oversampling::X1,
             pressure_oversampling: Oversampling::X1,
             iir_filter: IIRFilter::Disabled,
@@ -87,9 +93,10 @@ where
     /// Before using this device, you must call the [`Self::init`] method which
     /// initializes the device and ensures that it is working correctly.
     #[inline]
-    pub fn new_i2c(interface: I, address: Address) -> Self {
+    pub fn new_i2c(interface: I, address: Address, config: Configuration) -> Self {
         Self {
             interface: embedded_registers::i2c::I2cDevice::new(interface, address.into()),
+            config,
         }
     }
 }
@@ -109,9 +116,10 @@ where
     /// Before using this device, you must call the [`Self::init`] method which
     /// initializes the device and ensures that it is working correctly.
     #[inline]
-    pub fn new_spi(interface: I) -> Self {
+    pub fn new_spi(interface: I, config: Configuration) -> Self {
         Self {
             interface: embedded_registers::spi::SpiDevice::new(interface),
+            config,
         }
     }
 }
@@ -139,6 +147,10 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
         if !status.read_nvm_ready() && status.read_nvm_error() {
             return Err(Error::ResetFailed);
         }
+
+        // Configure the sensor.
+        let config = self.config.clone();
+        self.configure::<D>(&config).await?;
 
         Ok(())
     }
@@ -170,8 +182,8 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
             .map_err(Error::Bus)?;
         delay.delay_ms(10).await;
 
-        // todo: C code indicates a 2 ms delay after reset.
-        // todo: C code performs a read of the chip ID (most likely to clear the buffer)
+        // Table 4 & 4.3.10 specify to wait 2 ms after soft reset.
+        delay.delay_ms(2).await;
 
         if !self
             .read_register::<self::registers::InterruptStatus>()
@@ -189,6 +201,11 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
     /// Check sensor mode beforehand and call [`Self::reset`] if necessary. To configure
     /// advanced settings, please directly update the respective registers.
     pub async fn configure<D: hal::delay::DelayNs>(&mut self, config: &Configuration) -> Result<(), Error<I::Error>> {
+        // Enter standby mode to configure the sensor.
+        self.write_register(OdrConfig::default().with_power_mode(PowerMode::Standby))
+            .await
+            .map_err(Error::Bus)?;
+
         self.write_register(
             OversamplingConfig::default()
                 .with_temperature(config.temperature_oversampling)
@@ -205,50 +222,61 @@ impl<I: embedded_registers::RegisterInterface> BMP585<I> {
         .await
         .map_err(Error::Bus)?;
 
+        // Set the power mode.
+        self.write_register(config.odr).await.map_err(Error::Bus)?;
+
         Ok(())
     }
 
-    /// Performs a one-shot measurement. This will transition the device into forced mode,
-    /// which will cause it to take a measurement and return to sleep mode afterwards.
-    ///
-    /// This function will wait until the data is acquired, perform a burst read
-    /// and compensate the returned raw data using the calibration data.
+    /// Performs a measurement depending on current mode.
+    /// It assumes the device was previously configured and is in the correct mode.
     pub async fn measure<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<Measurements, Error<I::Error>> {
-        self.write_register(
-            PowerControl::default()
-                .with_sensor_mode(SensorMode::Forced)
-                .with_temperature_enable(true)
-                .with_pressure_enable(true),
-        )
-        .await
-        .map_err(Error::Bus)?;
+        match self.config.odr.read_power_mode() {
+            // If in Standby, trigger a new measurement using Forced mode.
+            PowerMode::Standby | PowerMode::Forced => self.force_read(delay).await,
 
-        // Read current oversampling config to determine required measurement delay
-        let reg_ctrl_m = self.read_register::<OversamplingControl>().await.map_err(Error::Bus)?;
-        let o_t = reg_ctrl_m.read_temperature_oversampling();
-        let o_p = reg_ctrl_m.read_pressure_oversampling();
-
-        // Maximum time required to perform the measurement.
-        // See section 3.9.2 of the datasheet for more information.
-        let max_measurement_delay_us = 234 + (392 + 2020 * o_p.factor()) + (163 + o_t.factor() * 2020);
-        delay.delay_us(max_measurement_delay_us).await;
-
-        let raw_data = self
-            .read_register::<BurstMeasurements>()
-            .await
-            .map_err(Error::Bus)?
-            .read_all();
-        let Some(ref cal) = self.calibration_data else {
-            return Err(Error::NotCalibrated);
-        };
-
-        let (temperature, t_fine) = raw_data.temperature.temperature;
-        let pressure = raw_data.pressure.pressure;
-
-        Ok(Measurements { temperature, pressure })
+            // If in Normal or Continuous mode, read the latest available data.
+            PowerMode::Normal | PowerMode::Continous => self.normal_read().await,
+        }
     }
 
-    pub async fn force_measure<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<Measurements, Error<I::Error>>{
-        Ok(Measurements { 0.0, 0.0 })
+    async fn force_read<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<Measurements, Error<I::Error>> {
+        self.write_register(OdrConfig::default().with_power_mode(PowerMode::Forced))
+            .await
+            .map_err(Error::Bus)?;
+
+        // Read current oversampling config to determine required measurement delay
+        let oversample_temp_us = self.config.temperature_oversampling.pressure_conversion_time_();
+        let oversample_press_us = self.config.pressure_oversampling.pressure_conversion_time_();
+
+        // Maximum time required to perform the measurement.
+        delay.delay_us(oversample_temp_us + oversample_press_us).await;
+
+        // Read the latest available data.
+        self.normal_read().await
+    }
+
+    async fn normal_read(&mut self) -> Result<Measurements, Error<I::Error>> {
+        // Read the latest available data.
+        let temperature = self
+            .read_register::<registers::Temperature>()
+            .await
+            .map_err(Error::Bus)?
+            .read_temperature();
+
+        let temperature = Rational32::new_raw(temperature as i32, 1 << 16);
+
+        let pressure = self
+            .read_register::<registers::Pressure>()
+            .await
+            .map_err(Error::Bus)?
+            .read_pressure();
+
+        let pressure = Rational32::new_raw(pressure as i32, 1 << 6);
+
+        Ok(Measurements {
+            temperature: ThermodynamicTemperature::new::<degree_celsius>(temperature),
+            pressure: Pressure::new::<pascal>(pressure),
+        })
     }
 }

@@ -479,6 +479,44 @@ pub enum Oversampling {
     X128 = 7,
 }
 
+impl Oversampling {
+    /// Returns the time it takes to convert a temperature value in microseconds for given Oversampling setting.
+    /// From the datasheet table 4.
+    pub fn temperature_conversion_time_(self) -> u32 {
+        let base_time = match self {
+            Oversampling::X1 => 1000,
+            Oversampling::X2 => 1100,
+            Oversampling::X4 => 1500,
+            Oversampling::X8 => 2100,
+            Oversampling::X16 => 3300,
+            Oversampling::X32 => 5800,
+            Oversampling::X64 => 10800,
+            Oversampling::X128 => 20800,
+        };
+
+        // Each can take up to 5% longer.
+        (base_time * 105) / 100
+    }
+
+    /// Returns the time it takes to convert a temperature value in microseconds for given Oversampling setting.
+    /// From the datasheet table 4.
+    pub fn pressure_conversion_time_(self) -> u32 {
+        let base_time = match self {
+            Oversampling::X1 => 1000,
+            Oversampling::X2 => 1700,
+            Oversampling::X4 => 2900,
+            Oversampling::X8 => 5400,
+            Oversampling::X16 => 10400,
+            Oversampling::X32 => 20400,
+            Oversampling::X64 => 40400,
+            Oversampling::X128 => 80400,
+        };
+
+        // Each can take up to 5% longer.
+        (base_time * 105) / 100
+    }
+}
+
 /// Over-sampling rate (OSR) configuration register.
 #[device_register(super::BMP585)]
 #[register(address = 0x36, mode = "rw")]
@@ -511,16 +549,35 @@ pub struct OversamplingConfig {
 #[repr(u8)]
 pub enum PowerMode {
     /// Standby mode: no measurement ongoing.
+    /// In STANDBY mode, no measurements are performed and power consumption is at a minimum. All registers are
+    /// accessible for write and read. Mode transitions to other modes are possible. The pressure and temperature data
+    /// registers PRESS_DATA_XXX and TEMP_DATA_XXX keep the values of the last measurement executed. The FIFO. if
+    /// enabled, also maintains its content and can be read.
     Standby = 0b00,
 
     /// Normal mode: measurement in configured ODR grid.
+    /// Normal mode performs pressure measurements with a configurable frequency, which is the output data rate (ODR). The
+    /// ODR can be set in ODR_CONFIG.odr. Normal mode continuously cycles between an (active) measurement period and
+    /// an (inactive) standby period. In normal mode, the most recent measurement result can be directly obtained from the data
+    /// registers. Alternatively, the latest measurement results can be obtained from the FIFO.
+    /// Normal mode is recommended if pressure needs to be sampled in regular intervals, but none of the conditions apply
+    /// where FORCED and CONTINOUS mode may be favorable.
     Normal = 0b01,
 
     /// Forced mode: forced one-time measurement.
+    /// In FORCED mode, a single measurement is performed according to selected measurement and filter options. When the
+    /// measurement is finished, the sensor returns to sleep mode and the measurement results can be obtained from the data
+    /// registers. For a next measurement, forced mode needs to be selected again. Forced mode is recommended for
+    /// applications which require very low sampling rate or host-based synchronization. Forced mode may also be used if an
+    /// ODR higher than 240 Hz is needed.
     Forced = 0b10,
 
     /// Non-Stop mode: repetitive measurements without further duty-cycling.
-    NonStop = 0b11,
+    /// Continuous mode performs pressure measurements similar to NORMAL mode. However, the ODR setting is ignored.
+    /// Sampling is performed with the maximum frequency that is possible with the selected oversampling settings.
+    /// CONTINOUS mode stays in the (active) measurement period and does not cycle to a standby period. The resulting ODR
+    /// is not necessarily a value that is selectable via the ODR register.
+    Continous = 0b11,
 }
 
 /// Output data rate (ODR) selection.
@@ -603,7 +660,7 @@ pub struct OdrConfig {
     /// Power mode configuration
     #[bondrewd(enum_primitive = "u8", bit_length = 2)]
     #[register(default = PowerMode::Standby)]
-    pub pwr_mode: PowerMode,
+    pub power_mode: PowerMode,
 
     /// Output data rate (ODR) selection.
     /// Note: the configured ODR might be invalid in combination with OSR
