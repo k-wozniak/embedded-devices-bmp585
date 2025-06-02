@@ -99,12 +99,12 @@ pub struct ModeCfg {
 
     /// Enable temperature measurements. (Default: 0b1, enabled) [cite: 14]
     /// Works in conjunction with MEAS_P. See Table 13. [cite: 17]
-    #[register(default = true)]  // Bit 1, Default 0b1
+    #[register(default = true)] // Bit 1, Default 0b1
     pub meas_t: bool,
 
     /// Enable pressure measurements. (Default: 0b1, enabled) [cite: 14]
     /// Works in conjunction with MEAS_T. See Table 13. [cite: 17]
-    #[register(default = true)]  // Bit 0, Default 0b1
+    #[register(default = true)] // Bit 0, Default 0b1
     pub meas_p: bool,
 }
 
@@ -357,31 +357,31 @@ pub struct IntCfg {
     pub reserved_x: bool,
 
     /// Temperature data is ready interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 6, Default 0b1
+    #[register(default = true)] // Bit 6, Default 0b1
     pub temp_ready_int_en: bool,
 
     /// Pressure FIFO reached high threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 5, Default 0b1
+    #[register(default = true)] // Bit 5, Default 0b1
     pub fifo_high_int_en: bool,
 
     /// Pressure FIFO is full interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 4, Default 0b1
+    #[register(default = true)] // Bit 4, Default 0b1
     pub fifo_full_int_en: bool,
 
     /// Pressure FIFO is empty interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 3, Default 0b1
+    #[register(default = true)] // Bit 3, Default 0b1
     pub fifo_empty_int_en: bool,
 
     /// Pressure data is available interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 2, Default 0b1
+    #[register(default = true)] // Bit 2, Default 0b1
     pub pressure_ready_int_en: bool,
 
     /// Pressure high threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 1, Default 0b1
+    #[register(default = true)] // Bit 1, Default 0b1
     pub pressure_high_int_en: bool,
 
     /// Pressure low threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)]  // Bit 0, Default 0b1
+    #[register(default = true)] // Bit 0, Default 0b1
     pub pressure_low_int_en: bool,
 }
 
@@ -484,7 +484,7 @@ pub struct FifoStat {
     pub fifo_full: bool,
 
     /// FIFO empty flag. Set when FIFO is enabled and empty (0 elements). (Default: 0b1) [cite: 60]
-    #[register(default = true)]  // Bit 1, Default 0b1
+    #[register(default = true)] // Bit 1, Default 0b1
     pub fifo_empty: bool,
 
     /// FIFO high threshold met. Set when enabled and #elements > FP_FILL_TH. (Default: 0b0) [cite: 60]
