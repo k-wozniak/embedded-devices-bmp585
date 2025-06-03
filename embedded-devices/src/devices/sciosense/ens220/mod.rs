@@ -96,24 +96,6 @@ pub enum Error<BusError> {
     DataNotReady,
 }
 
-/// Represents the operational mode of the ENS220 sensor.
-/// This primarily maps to the STBY_CFG.STBY_T register settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationMode {
-    /// Continuous measurements. Corresponds to STBY_T = 0b0000.
-    Continuous,
-    /// Single measurement then return to idle. Corresponds to STBY_T = 0b0001.
-    OneShot,
-    /// Pulsed measurements with a specified duration.
-    Pulsed(StandbyDuration),
-}
-
-impl Default for OperationMode {
-    fn default() -> Self {
-        OperationMode::OneShot // A common default for on-demand measurements
-    }
-}
-
 /// Main driver struct for the ENS220 sensor.
 #[device]
 #[maybe_async_cfg::maybe(
@@ -153,7 +135,7 @@ pub struct Measurements {
 #[derive(Debug, Clone)]
 pub struct Configuration {
     /// Desired operation mode.
-    pub operation_mode: OperationMode,
+    pub operation_mode: StandbyDuration,
     /// Oversampling setting for temperature measurements.
     pub temperature_oversampling: OversamplingSetting,
     /// Oversampling setting for pressure measurements.
@@ -179,7 +161,7 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            operation_mode: OperationMode::default(),
+            operation_mode: StandbyDuration::OneShot,
             temperature_oversampling: OversamplingSetting::Avg1, // Default OVST
             pressure_oversampling: OversamplingSetting::Avg1,    // Default OVSP
             pressure_moving_average: MovingAverageSamples::Samples1, // Default MAVG
@@ -248,33 +230,14 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     pub async fn init<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<I::Error>> {
         self.soft_reset(delay).await?;
 
+        // Check the device ID to ensure we are communicating with the correct chip.
         let part_id_reg = self.read_register::<PartId>().await.map_err(Error::Bus)?;
         if part_id_reg.read_id() != address::DEVICE_IDENTIFIER {
             return Err(Error::InvalidChip(part_id_reg.read_id()));
         }
 
-        // Apply the stored configuration.
-        // Ensure sensor is in a known state (idle) before full configuration.
-        let mut mode_cfg_val = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
-        mode_cfg_val.write_start(false); // Ensure idle
-        // Set HP=1 for configuration, then optionally HP=0 later based on use case (not done here for simplicity)
-        // The reset sequence in datasheet suggests HP=0 for reset, then HP=1 for config
-        // For simplicity, we assume HP state is managed by user or defaults are fine for now.
-        // The MODE_CFG.RESET line in datasheet indicates: "$0x08 \rightarrow wait 0.5ms \rightarrow 0x80 \rightarrow wait 0.5ms \rightarrow configure device"
-        // This implies setting HP=0 during reset, then HP=1 after reset for configuration.
-        // The soft_reset function already handles the $0x08 part.
-        // After reset, we might need to set HP=1 for full register access during configuration.
-        mode_cfg_val.write_high_power(true); // Enable HP mode for configuration access
-        self.write_register(mode_cfg_val).await.map_err(Error::Bus)?;
-        delay.delay_ms(1).await; // Short delay after enabling HP mode  (0.5ms required)
-
-        self.configure(&self.config.clone(), delay).await?; // Pass delay to configure
-
-        // Optionally, set HP=0 if desired for lower power after configuration.
-        // This depends on the application's needs and is not enforced here.
-        // mode_cfg_val = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
-        // mode_cfg_val.hp = false;
-        // self.write_register(mode_cfg_val).await.map_err(Error::Bus)?;
+        // Set the initial configuration after reset.
+        self.configure(&self.config.clone(), delay).await?;
 
         Ok(())
     }
@@ -284,40 +247,53 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     pub async fn soft_reset<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<I::Error>> {
         // Suggested reset sequence part 1: set RESET=1, HP=0. Value 0x08 for MODE_CFG.
         // This also sets START=0, MEAS_T=0, MEAS_P=0, FIFO_MODE=00.
-        let reset_cmd = ModeCfg::default()
-            .with_high_power(false)
-            .with_fifo_mode(FifoMode::DirectPath)
-            .with_start(false)
-            .with_reset(true)
-            .with_measurement_selection(MeasurementSelection::PressureAndTemperature);
+        self.write_register(
+            ModeCfg::default()
+                .with_high_power(false)
+                .with_fifo_mode(FifoMode::DirectPath)
+                .with_start(false)
+                .with_reset(true)
+                .with_measurement_selection(MeasurementSelection::PressureAndTemperature),
+        )
+        .await
+        .map_err(Error::Bus)?;
 
-        self.write_register(reset_cmd).await.map_err(Error::Bus)?;
-        delay.delay_ms(2).await; // Datasheet suggests 0.5ms after setting RESET. Using 2ms for safety.
+        // Datasheet suggests 0.5ms after setting RESET. Using 2ms for safety.
+        delay.delay_ms(2).await;
 
         // RESET bit is auto-cleared.
         Ok(())
     }
 
+    /// Set sensor to idle mode.
+    /// This is typically done by setting `MODE_CFG.START = 0`.
+    /// This method is useful before reconfiguring the sensor or performing a reset.
+    /// Changes Power Mode to High Power (HP=1) if not already set, to ensure all registers are writable.
+    pub async fn set_idle<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<I::Error>> {
+        // Read the current mode configuration.
+        let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
+
+        // Update required fields for idle mode.
+        mode_cfg.write_high_power(true);
+        mode_cfg.write_start(false);
+
+        // Set the new configuration.
+        self.write_register(mode_cfg).await.map_err(Error::Bus)?;
+
+        // Short delay after enabling High Power mode (0.5ms required)
+        delay.delay_us(500).await;
+
+        Ok(())
+    }
+
     /// Configures the sensor with the provided settings.
-    /// The sensor should ideally be in idle mode (`MODE_CFG.START = 0`) before calling this.
-    /// This method may set HP=1 temporarily if not already set, to ensure all registers are writable.
     pub async fn configure<D: hal::delay::DelayNs>(
         &mut self,
         config: &Configuration,
-        _delay: &mut D,
+        delay: &mut D,
     ) -> Result<(), Error<I::Error>> {
-        // Ensure START is 0 before changing critical settings.
-        // HP should be 1 to configure all registers. Assumed to be set by init or caller.
-        let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
-        if !mode_cfg.read_high_power() {
-            // If HP is not set, set it for configuration
-            mode_cfg.write_high_power(true);
-            self.write_register(mode_cfg).await.map_err(Error::Bus)?;
-            _delay.delay_ms(1).await; // Delay after HP set
-            mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?; // Re-read
-        }
-        mode_cfg.write_start(false);
-        self.write_register(mode_cfg).await.map_err(Error::Bus)?;
+        // Ensure the sensor is in idle mode before applying configuration.
+        self.set_idle(delay).await?;
 
         // Configure MEAS_CFG: Pressure conversion time and P/T rate
         self.write_register(
@@ -342,18 +318,13 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             .await
             .map_err(Error::Bus)?;
 
-        // Configure STBY_CFG: Standby duration (determines operation_mode)
-        let stby_val = match config.operation_mode {
-            OperationMode::Continuous => StandbyDuration::Continuous,
-            OperationMode::OneShot => StandbyDuration::OneShot,
-            OperationMode::Pulsed(duration) => duration,
-        };
-        self.write_register(StandbyCfg::default().with_standby_duration(stby_val))
+        // Configure STBY_CFG: Standby duration (operation mode)
+        self.write_register(StandbyCfg::default().with_standby_duration(config.operation_mode))
             .await
             .map_err(Error::Bus)?;
 
         // Configure MODE_CFG: Measurement enables, FIFO mode (HP and START handled separately)
-        mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?; // Read current HP, START, RESET state
+        let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?; // Read current HP, START, RESET state
         mode_cfg.write_measurement_selection(config.measurement_selection);
 
         if config.pressure_moving_average != MovingAverageSamples::Samples1 {
@@ -376,57 +347,44 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     /// - If mode is `Continuous` or `Pulsed`, reads the latest available data.
     ///   (Assumes `MODE_CFG.START = 1` has been set by the user after `configure` for these modes).
     pub async fn measure<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<Measurements, Error<I::Error>> {
-        match self.config.operation_mode {
-            OperationMode::OneShot => {
-                // Ensure STBY_CFG is set for OneShot (already done by configure, but can be re-asserted)
-                let mut stby_cfg = self.read_register::<StandbyCfg>().await.map_err(Error::Bus)?;
-                if stby_cfg.read_standby_duration() != StandbyDuration::OneShot {
-                    stby_cfg.write_standby_duration(StandbyDuration::OneShot);
-                    self.write_register(stby_cfg).await.map_err(Error::Bus)?;
+        // If not in continuous or pulsed mode, set a single measurement.
+        if self.config.operation_mode == StandbyDuration::OneShot {
+            // Start a single measurement
+            let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
+            mode_cfg.write_start(true);
+            self.write_register(mode_cfg).await.map_err(Error::Bus)?;
+
+            // Calculate and wait for measurement duration
+            let wait_us = self.calculate_measurement_delay_us();
+            delay.delay_us(wait_us as u32).await; // Cast to u32, ensure it fits
+
+            // Check DATA_STAT register for data ready flags
+            let mut data_ready_p = false;
+            let mut data_ready_t = false;
+            let max_retries = 10; // Max retries for checking data ready status
+            for _ in 0..max_retries {
+                let data_stat = self.read_register::<DataStat>().await.map_err(Error::Bus)?;
+                data_ready_p = self.config.measure_pressure_enable && data_stat.read_pressure_ready();
+                data_ready_t = self.config.measure_temperature_enable && data_stat.read_temp_ready();
+
+                let p_ok = !self.config.measure_pressure_enable || data_ready_p;
+                let t_ok = !self.config.measure_temperature_enable || data_ready_t;
+
+                if p_ok && t_ok {
+                    break;
                 }
 
-                // Start a single measurement
-                let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
-                mode_cfg.write_start(true);
-                self.write_register(mode_cfg).await.map_err(Error::Bus)?;
-
-                // Calculate and wait for measurement duration
-                let wait_us = self.calculate_measurement_delay_us();
-                delay.delay_us(wait_us as u32).await; // Cast to u32, ensure it fits
-
-                // Check DATA_STAT register for data ready flags
-                let mut data_ready_p = false;
-                let mut data_ready_t = false;
-                let max_retries = 10; // Max retries for checking data ready status
-                for _ in 0..max_retries {
-                    let data_stat = self.read_register::<DataStat>().await.map_err(Error::Bus)?;
-                    data_ready_p = self.config.measure_pressure_enable && data_stat.read_pressure_ready();
-                    data_ready_t = self.config.measure_temperature_enable && data_stat.read_temp_ready();
-
-                    let p_ok = !self.config.measure_pressure_enable || data_ready_p;
-                    let t_ok = !self.config.measure_temperature_enable || data_ready_t;
-
-                    if p_ok && t_ok {
-                        break;
-                    }
-                    delay.delay_ms(1).await; // Short delay before retrying
-                }
-
-                if (self.config.measure_pressure_enable && !data_ready_p)
-                    || (self.config.measure_temperature_enable && !data_ready_t)
-                {
-                    return Err(Error::DataNotReady);
-                }
-                // START bit is auto-cleared by hardware in one-shot mode
-                self.read_sensor_data().await
+                delay.delay_ms(1).await; // Short delay before retrying
             }
-            OperationMode::Continuous | OperationMode::Pulsed(_) => {
-                // Assumes START bit in MODE_CFG is already 1 (set by user after configure)
-                // Optionally, check DATA_STAT here too for polling, but for simplicity, we read directly.
-                // For a robust driver, polling DATA_STAT or using interrupts is better.
-                self.read_sensor_data().await
+
+            if (self.config.measure_pressure_enable && !data_ready_p)
+                || (self.config.measure_temperature_enable && !data_ready_t)
+            {
+                return Err(Error::DataNotReady);
             }
         }
+
+        self.read_sensor_data().await
     }
 
     /// Helper function to calculate estimated delay for a P+T measurement cycle.
@@ -453,8 +411,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             total_delay_us += (3 + ovst_factor) * t_conv_next_us;
         }
 
-        // Add a small margin
-        total_delay_us + 5_000 // 5ms margin
+        total_delay_us
     }
 
     /// Helper to read and convert pressure and temperature data.
@@ -475,7 +432,6 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         // Convert raw values
         // Temperature: val / 128.0 (raw is in 1/128 K)
         let temperature_k = Rational32::new_raw(temp_val_raw as i32, 128);
-
         // Pressure: val / 64.0 (raw is in 1/64 Pa)
         let pressure_pa = Rational32::new_raw(press_val_raw as i32, 64);
 
