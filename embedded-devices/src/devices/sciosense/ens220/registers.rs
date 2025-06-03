@@ -1,47 +1,26 @@
-use bondrewd::{BitfieldEnum, Bitfields};
+use bondrewd::BitfieldEnum;
 use embedded_devices_derive::device_register;
 use embedded_registers::register;
 
-// This would typically be in a higher-level module, e.g., `mod.rs` or `lib.rs`
-// For this example, we define it here.
-// pub struct ENS220DeviceInterface; // Placeholder for actual I2C/SPI interface type
-// pub type ENS220Common = ENS220DeviceInterface; // Or some common struct
-
-// Placeholder for the main device struct or a common type used by `device_register`
-// In a real driver, this would be replaced with the actual device struct.
-pub struct ENS220Common;
-
-/// Device ID value for ENS220.
-/// The PART_ID register (0x00-0x01) results in 0x0321. [cite: 9, 7]
-#[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
-#[bondrewd_enum(u16)]
-#[repr(u16)]
-pub enum DeviceIdentifier {
-    /// ENS220 Device ID
-    ENS220 = 0x0321,
-    /// Unknown or invalid device ID
-    Unknown(u16),
-}
-
 /// The chip identification number (PART_ID).
-/// This 16-bit number can be read as soon as the device is powered up. [cite: 8]
-/// It is stored in little-endian format across addresses 0x00 (LSB) and 0x01 (MSB). [cite: 7, 9]
-/// Default value is 0x0321. [cite: 9]
+/// This 16-bit number can be read as soon as the device is powered up.
+/// It is stored in little-endian format across addresses 0x00 (LSB) and 0x01 (MSB).
+/// Default value is 0x0321.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x00, mode = "r")] // Access: Rr [cite: 9]
+#[register(address = 0x00, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 2)]
 pub struct PartId {
     /// The 16-bit device identifier.
-    #[bondrewd(enum_primitive = "u16", bit_length = 16)]
-    #[register(default = DeviceIdentifier::Unknown(0))] // Chip power-on default is ENS220
-    pub device_id: DeviceIdentifier,
+    #[bondrewd(bit_length = 16)]
+    #[register(default = 0x0321)] // Chip power-on default is ENS220, todo check the default value.
+    pub id: u16,
 }
 
 /// Unique ID (UID) of the device.
-/// This 32-bit unique device identifier is read-only. [cite: 10]
-/// It is stored in little-endian format across addresses 0x02-0x05. [cite: 11, 7]
+/// This 32-bit unique device identifier is read-only.
+/// It is stored in little-endian format across addresses 0x02-0x05.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x02, mode = "r")] // Access: R [cite: 11]
+#[register(address = 0x02, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 4)]
 pub struct Uid {
     /// The 32-bit unique identifier.
@@ -49,7 +28,7 @@ pub struct Uid {
     pub unique_id: u32,
 }
 
-/// FIFO Mode settings for the MODE_CFG register. [cite: 14]
+/// FIFO Mode settings for the MODE_CFG register.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
@@ -60,75 +39,79 @@ pub enum FifoMode {
     Fifo = 0b01,
     /// Moving average filter enabled for pressure data.
     MovingAverage = 0b10,
-    /// Reserved setting.
-    Reserved = 0b11,
+}
+
+/// Measurement selection (MEAS_T and MEAS_P bits).
+/// See Table 13: Measurement selection with MEAS_T and MEAS_P.
+#[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
+#[bondrewd_enum(u8)]
+#[repr(u8)]
+pub enum MeasurementSelection {
+    /// Only pressure measurements are enabled; the device will begin with a temperature measurement, then continue measuring only pressure.
+    PressureOnly = 0b01,
+    /// Only temperature measurement is enabled.
+    TemperatureOnly = 0b10,
+    /// Pressure and temperature measurements are enabled. PT_RATE controls the temperature interleaving timer.
+    PressureAndTemperature = 0b11,
 }
 
 /// Device Configuration (MODE_CFG) register.
-/// Address: 0x06. Default: 0x03. Access: RWrw. [cite: 2, 14]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x06, mode = "rw")] // Access: RWrw (Read/Write, some restrictions in low power) [cite: 2]
-#[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)] // Single byte
+#[register(address = 0x06, mode = "rw")] // Access: RWrw (Read/Write, some restrictions in low power)
+#[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct ModeCfg {
     /// High Power Bit.
     /// 0b1: All registers accessible via SPI/I2C; high power consumption.
-    /// 0b0: Limited registers accessible; low power consumption. (Default) [cite: 14]
-    #[register(default = false)] // Bit 7, Default 0b0
-    pub hp: bool,
+    /// 0b0: Limited registers accessible; low power consumption. (Default)
+    #[register(default = false)]
+    pub high_power: bool,
 
-    /// Pressure data path configuration (FIFO mode). (Default: DirectPath) [cite: 14]
+    /// Pressure data path configuration (FIFO mode).
     #[bondrewd(enum_primitive = "u8", bit_length = 2)]
-    #[register(default = FifoMode::DirectPath)] // Bits 6:5, Default 0b00
+    #[register(default = FifoMode::DirectPath)]
     pub fifo_mode: FifoMode,
 
     /// Operating mode configuration (Start measurements).
-    /// 0b0: Stop measurements (idle mode). (Default) [cite: 14]
+    /// 0b0: Stop measurements (idle mode). (Default)
     /// 0b1: Start measurements (measurement mode).
-    #[register(default = false)] // Bit 4, Default 0b0
+    #[register(default = false)]
     pub start: bool,
 
     /// Device reset.
-    /// 0b1: The device is reset to power-on configuration. Auto-cleared. (Default: 0b0) [cite: 14]
-    #[register(default = false)] // Bit 3, Default 0b0
+    /// 0b1: The device is reset to power-on configuration. Auto-cleared.
+    #[register(default = false)]
     pub reset: bool,
 
-    /// Reserved bit. Must be set to default value (0b0). [cite: 14]
+    /// Reserved bit. Must be set to default value (0b0).
     #[allow(dead_code)]
-    #[register(default = false)] // Bit 2, Default 0b0
-    pub reserved_x: bool,
+    #[register(default = false)]
+    pub reserved: bool,
 
-    /// Enable temperature measurements. (Default: 0b1, enabled) [cite: 14]
-    /// Works in conjunction with MEAS_P. See Table 13. [cite: 17]
-    #[register(default = true)] // Bit 1, Default 0b1
-    pub meas_t: bool,
-
-    /// Enable pressure measurements. (Default: 0b1, enabled) [cite: 14]
-    /// Works in conjunction with MEAS_T. See Table 13. [cite: 17]
-    #[register(default = true)] // Bit 0, Default 0b1
-    pub meas_p: bool,
+    /// Measurement selection (MEAS_T and MEAS_P bits).
+    #[bondrewd(enum_primitive = "u8", bit_length = 2)]
+    #[register(default = MeasurementSelection::PressureAndTemperature)]
+    pub measurement_selection: MeasurementSelection,
 }
 
-/// Pressure ADC conversion time settings for MEAS_CFG.P_CONV. [cite: 21]
+/// Pressure ADC conversion time settings for MEAS_CFG.P_CONV.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 pub enum PressureConvTime {
     /// First conversion 4ms, subsequent 1ms.
     Ms4_1 = 0b00,
-    /// First conversion 8ms, subsequent 2ms. (Default) [cite: 19]
+    /// First conversion 8ms, subsequent 2ms. (Default)
     Ms8_2 = 0b01,
     /// First conversion 16ms, subsequent 4ms.
     Ms16_4 = 0b10,
-    /// Reserved setting.
-    Reserved = 0b11,
 }
 
-/// Ratio between Pressure and Temperature measurements for MEAS_CFG.PT_RATE. [cite: 24]
+/// Ratio between Pressure and Temperature measurements for MEAS_CFG.PT_RATE.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 pub enum PressureTempRate {
-    /// P/T rate: 1 (Default) [cite: 19]
+    /// P/T rate: 1 (Default)
     Rate1 = 0b000,
     /// P/T rate: 4
     Rate4 = 0b001,
@@ -147,35 +130,34 @@ pub enum PressureTempRate {
 }
 
 /// Measurement Configuration (MEAS_CFG) register.
-/// Address: 0x07. Default: 0x08. Access: RW. [cite: 2, 19]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x07, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x07, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct MeasCfg {
-    /// Reserved bits. Must be set to default value (0b000). [cite: 19]
+    /// Reserved bits. Must be set to default value (0b000).
     #[allow(dead_code)]
     #[bondrewd(bit_length = 3)]
-    #[register(default = 0b000)] // Bits 7:5, Default 0b000
-    pub reserved_x: u8,
+    #[register(default = 0b000)]
+    pub reserved: u8,
 
-    /// Pressure ADC conversion time. (Default: Ms8_2) [cite: 19]
+    /// Pressure ADC conversion time.
     #[bondrewd(enum_primitive = "u8", bit_length = 2)]
-    #[register(default = PressureConvTime::Ms8_2)] // Bits 4:3, Default 0b01
+    #[register(default = PressureConvTime::Ms8_2)]
     pub p_conv: PressureConvTime,
 
-    /// Ratio between P and T measurements. (Default: Rate1) [cite: 19]
+    /// Ratio between P and T measurements.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
-    #[register(default = PressureTempRate::Rate1)] // Bits 2:0, Default 0b000
+    #[register(default = PressureTempRate::Rate1)]
     pub pt_rate: PressureTempRate,
 }
 
-/// Standby duration settings for STBY_CFG.STBY_T. [cite: 29]
+/// Standby duration settings for STBY_CFG.STBY_T.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 pub enum StandbyDuration {
-    /// Continuous operation. (Default) [cite: 27]
+    /// Continuous operation. (Default)
     Continuous = 0b0000,
     /// One-shot operation (device returns to idle after one measurement).
     OneShot = 0b0001,
@@ -210,29 +192,27 @@ pub enum StandbyDuration {
 }
 
 /// Standby Time Configuration (STBY_CFG) register.
-/// Address: 0x08. Default: 0x00. Access: RWw. [cite: 2, 27]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x08, mode = "rw")] // Access: RWw (Write access in low power mode) [cite: 2, 3]
+#[register(address = 0x08, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
-pub struct StbyCfg {
-    /// Reserved bits. Needs to be set to default value (0x0). [cite: 27]
+pub struct StandbyCfg {
     #[allow(dead_code)]
     #[bondrewd(bit_length = 4)]
-    #[register(default = 0x0)] // Bits 7:4, Default 0x0
-    pub reserved_x: u8,
+    #[register(default = 0x0)]
+    pub reserved: u8,
 
-    /// Standby duration in-between measurements. (Default: Continuous) [cite: 27]
+    /// Standby duration in-between measurements.
     #[bondrewd(enum_primitive = "u8", bit_length = 4)]
-    #[register(default = StandbyDuration::Continuous)] // Bits 3:0, Default 0x0
-    pub stby_t: StandbyDuration,
+    #[register(default = StandbyDuration::Continuous)]
+    pub standby_duration: StandbyDuration,
 }
 
-/// Oversampling settings for OVS_CFG.OVSP and OVS_CFG.OVST. [cite: 34, 35]
+/// Oversampling settings for OVS_CFG.OVSP and OVS_CFG.OVST.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 pub enum OversamplingSetting {
-    /// Number of averages: 1 (Default) [cite: 32]
+    /// Number of averages: 1 (Default)
     Avg1 = 0b000,
     /// Number of averages: 2
     Avg2 = 0b001,
@@ -251,34 +231,33 @@ pub enum OversamplingSetting {
 }
 
 /// Oversampling Settings (OVS_CFG) register.
-/// Address: 0x09. Default: 0x00. Access: RW. [cite: 2, 32]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x09, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x09, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct OvsCfg {
-    /// Reserved bits. Must be set to default value (0b00). [cite: 32]
+    /// Reserved bits. Must be set to default value (0b00).
     #[allow(dead_code)]
     #[bondrewd(bit_length = 2)]
-    #[register(default = 0b00)] // Bits 7:6, Default 0b00
-    pub reserved_x: u8,
+    #[register(default = 0b00)]
+    pub reserved: u8,
 
-    /// Oversampling of pressure measurements. (Default: Avg1) [cite: 32]
+    /// Oversampling of pressure measurements.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
-    #[register(default = OversamplingSetting::Avg1)] // Bits 5:3, Default 0b000
+    #[register(default = OversamplingSetting::Avg1)]
     pub ovsp: OversamplingSetting,
 
-    /// Oversampling of temperature measurements. (Default: Avg1) [cite: 32]
+    /// Oversampling of temperature measurements.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
-    #[register(default = OversamplingSetting::Avg1)] // Bits 2:0, Default 0b000
+    #[register(default = OversamplingSetting::Avg1)]
     pub ovst: OversamplingSetting,
 }
 
-/// Moving average filter sample count for MAVG_CFG.MAVG. [cite: 40]
+/// Moving average filter sample count for MAVG_CFG.MAVG.
 #[derive(BitfieldEnum, Copy, Clone, PartialEq, Eq, Debug, defmt::Format)]
 #[bondrewd_enum(u8)]
 #[repr(u8)]
 pub enum MovingAverageSamples {
-    /// Samples: 1 (Default) [cite: 38]
+    /// Samples: 1 (Default)
     Samples1 = 0b000,
     /// Samples: 2
     Samples2 = 0b001,
@@ -288,110 +267,100 @@ pub enum MovingAverageSamples {
     Samples8 = 0b011,
     /// Samples: 16
     Samples16 = 0b100,
-    /// Samples: 32 (represented by 0b101)
-    Samples32_Val5 = 0b101,
-    /// Samples: 32 (represented by 0b110)
-    Samples32_Val6 = 0b110,
-    /// Samples: 32 (represented by 0b111)
-    Samples32_Val7 = 0b111,
+    /// Samples: 32
+    Samples32 = 0b101,
 }
 
 /// Moving Average Configuration (MAVG_CFG) register.
-/// Address: 0x0A. Default: 0x00. Access: RW. [cite: 2, 38]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x0A, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x0A, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct MavgCfg {
-    /// Reserved bits. Must be set to default value (0x00). [cite: 38]
+    /// Reserved bits. Must be set to default value (0x00).
     #[allow(dead_code)]
     #[bondrewd(bit_length = 5)]
-    #[register(default = 0x00)] // Bits 7:3, Default 0x00
-    pub reserved_x: u8,
+    #[register(default = 0x00)]
+    pub reserved: u8,
 
-    /// Controls the number of samples used by the moving average filter. (Default: Samples1) [cite: 38]
+    /// Controls the number of samples used by the moving average filter.
     #[bondrewd(enum_primitive = "u8", bit_length = 3)]
-    #[register(default = MovingAverageSamples::Samples1)] // Bits 2:0, Default 0b000
+    #[register(default = MovingAverageSamples::Samples1)]
     pub mavg: MovingAverageSamples,
 }
 
 /// Host Interface Configuration (INTF_CFG) register.
-/// Address: 0x0B. Default: 0x00. Access: RWw. [cite: 2, 43]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x0B, mode = "rw")] // Access: RWw [cite: 2, 3]
+#[register(address = 0x0B, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct IntfCfg {
-    /// Reserved bits. Must be set to default value (0x0). [cite: 43]
     #[allow(dead_code)]
     #[bondrewd(bit_length = 5)]
-    #[register(default = 0x0)] // Bits 7:3, Default 0x0
-    pub reserved_x: u8,
+    #[register(default = 0x0)]
+    pub reserved: u8,
 
     /// Interrupt enable.
     /// 0b1: INT/SDO is controlled by INT_STAT.IA.
-    /// 0b0: INT/SDO is always low. (Default) [cite: 43]
-    #[register(default = false)] // Bit 2, Default 0b0
+    /// 0b0: INT/SDO is always low. (Default)
+    #[register(default = false)]
     pub int_en: bool,
 
     /// Interrupt polarity.
     /// 0b1: INT/SDO low signals that interrupt is asserted.
-    /// 0b0: INT/SDO high signals that interrupt is asserted. (Default) [cite: 43]
-    #[register(default = false)] // Bit 1, Default 0b0
+    /// 0b0: INT/SDO high signals that interrupt is asserted. (Default)
+    #[register(default = false)]
     pub int_ht_pol: bool, // Renamed from int_ht for clarity: false=active_high, true=active_low
 
     /// SPI mode control.
     /// 0b1: SPI works in 3-wire mode.
-    /// 0b0: SPI works in 4-wire mode. (Default) [cite: 43]
+    /// 0b0: SPI works in 4-wire mode. (Default)
     #[register(default = false)] // Bit 0, Default 0b0
     pub spi3_enable: bool,
 }
 
 /// Interrupt Mask Configuration (INT_CFG) register.
-/// Address: 0x0C. Default: 0x7F. Access: RWw. [cite: 2, 46]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x0C, mode = "rw")] // Access: RWw [cite: 2, 3]
+#[register(address = 0x0C, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct IntCfg {
-    /// Reserved bit. Must be set to default value (0b0). [cite: 46]
     #[allow(dead_code)]
-    #[register(default = false)] // Bit 7, Default 0b0
-    pub reserved_x: bool,
+    #[register(default = false)]
+    pub reserved: bool,
 
-    /// Temperature data is ready interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 6, Default 0b1
+    /// Temperature data is ready interrupt enable.
+    #[register(default = true)]
     pub temp_ready_int_en: bool,
 
-    /// Pressure FIFO reached high threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 5, Default 0b1
+    /// Pressure FIFO reached high threshold interrupt enable.
+    #[register(default = true)]
     pub fifo_high_int_en: bool,
 
-    /// Pressure FIFO is full interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 4, Default 0b1
+    /// Pressure FIFO is full interrupt enable.
+    #[register(default = true)]
     pub fifo_full_int_en: bool,
 
-    /// Pressure FIFO is empty interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 3, Default 0b1
+    /// Pressure FIFO is empty interrupt enable.
+    #[register(default = true)]
     pub fifo_empty_int_en: bool,
 
-    /// Pressure data is available interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 2, Default 0b1
+    /// Pressure data is available interrupt enable.
+    #[register(default = true)]
     pub pressure_ready_int_en: bool,
 
-    /// Pressure high threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 1, Default 0b1
+    /// Pressure high threshold interrupt enable.
+    #[register(default = true)]
     pub pressure_high_int_en: bool,
 
-    /// Pressure low threshold interrupt enable. (Default: 0b1, enabled) [cite: 46]
-    #[register(default = true)] // Bit 0, Default 0b1
+    /// Pressure low threshold interrupt enable.
+    #[register(default = true)]
     pub pressure_low_int_en: bool,
 }
 
 /// Low Pressure Threshold (PRESS_LO) register.
-/// Address: 0x0D-0x0F. Default: 0x000000. Access: RW. [cite: 2, 49]
-/// This 3-byte register sets the 24-bit low-pressure interrupt threshold in 1/64 Pa. Stored little-endian. [cite: 48, 7]
+/// This 3-byte register sets the 24-bit low-pressure interrupt threshold in 1/64 Pa.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x0D, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x0D, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
-pub struct PressLoThreshold {
+pub struct PressLowThreshold {
     /// Low pressure threshold value [23:0].
     #[bondrewd(bit_length = 24)]
     #[register(default = 0x000000)]
@@ -399,146 +368,138 @@ pub struct PressLoThreshold {
 }
 
 /// High Pressure Threshold (PRESS_HI) register.
-/// Address: 0x10-0x12. Default: 0xFFFFFF. Access: RW. [cite: 2] Note: Table 27 [cite: 51] field defaults differ from Table 9[cite: 2]. Using Table 9 for overall default.
-/// This 3-byte register sets the 24-bit high-pressure interrupt threshold in 1/64 Pa. Stored little-endian. [cite: 50, 7]
+/// This 3-byte register sets the 24-bit high-pressure interrupt threshold in 1/64 Pa. Stored little-endian.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x10, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x10, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
-pub struct PressHiThreshold {
+pub struct PressHighThreshold {
     /// High pressure threshold value [23:0].
     #[bondrewd(bit_length = 24)]
-    #[register(default = 0xFFFFFF)] // Default from Table 9 for PRESS_HI_XL, L, H [cite: 2]
+    #[register(default = 0xFFFFFF)] // Default from Table 9 for PRESS_HI_XL, L, H
     pub threshold: u32,
 }
 
 /// FIFO Configuration (FIFO_CFG) register.
-/// Address: 0x13. Default: 0x00. Access: RW. [cite: 2, 54]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x13, mode = "rw")] // Access: RW [cite: 2]
+#[register(address = 0x13, mode = "rw")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct FifoCfg {
-    /// Reserved bits. Must be set to default value (0b00). [cite: 54]
     #[allow(dead_code)]
     #[bondrewd(bit_length = 2)]
-    #[register(default = 0b00)] // Bits 7:6, Default 0b00
-    pub reserved_x: u8,
+    #[register(default = 0b00)]
+    pub reserved: u8,
 
     /// FIFO clear.
     /// 0b1: The content of the FIFO is cleared. Auto-cleared.
-    /// 0b0: No operation. (Default) [cite: 54]
-    #[register(default = false)] // Bit 5, Default 0b0
-    pub fp_clear: bool,
+    /// 0b0: No operation. (Default)
+    #[register(default = false)]
+    pub clear: bool,
 
-    /// FIFO level threshold for interrupt/status generation (0-31). (Default: 0x00) [cite: 54]
+    /// FIFO level threshold for interrupt/status generation (0-31).
     #[bondrewd(bit_length = 5)]
-    #[register(default = 0x00)] // Bits 4:0, Default 0x00
-    pub fp_fill_th: u8,
+    #[register(default = 0x00)]
+    pub fill_threshold: u8,
 }
 
 /// Measurement Data Status (DATA_STAT) register.
-/// Address: 0x14. Default: 0x00. Access: Rr. [cite: 2, 57]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x14, mode = "r")] // Access: Rr (Read access, also in ultra-low power) [cite: 2]
+#[register(address = 0x14, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct DataStat {
-    /// Reserved bits. Reads 0. [cite: 57]
     #[allow(dead_code)]
     #[bondrewd(bit_length = 4)]
-    #[register(default = 0x0)] // Bits 7:4, Default 0x0
-    pub reserved_x: u8,
+    #[register(default = 0x0)]
+    pub reserved: u8,
 
     /// Pressure overwrite. Set if new P data arrives while FIFO full (FIFO enabled) or previous data not read.
-    /// Cleared after reading PRESS_OUT_H or PRESS_OUT_F_H. (Default: 0b0) [cite: 57]
-    #[register(default = false)] // Bit 3, Default 0b0
+    /// Cleared after reading PRESS_OUT_H or PRESS_OUT_F_H.
+    #[register(default = false)]
     pub pressure_overwrite: bool,
 
     /// Temperature overwrite. Set if new T data arrives and previous was not read.
-    /// Cleared after reading TEMP_OUT_H. (Default: 0b0) [cite: 57]
-    #[register(default = false)] // Bit 2, Default 0b0
+    /// Cleared after reading TEMP_OUT_H.
+    #[register(default = false)]
     pub temp_overwrite: bool,
 
     /// Pressure ready. Set when new pressure data is available.
-    /// Cleared after reading PRESS_OUT_H. (Default: 0b0) [cite: 57]
-    #[register(default = false)] // Bit 1, Default 0b0
+    /// Cleared after reading PRESS_OUT_H.
+    #[register(default = false)]
     pub pressure_ready: bool,
 
     /// Temperature ready. Set when new temperature data is available.
-    /// Cleared after reading TEMP_OUT_H. (Default: 0b0) [cite: 57]
-    #[register(default = false)] // Bit 0, Default 0b0
+    /// Cleared after reading TEMP_OUT_H.
+    #[register(default = false)]
     pub temp_ready: bool,
 }
 
 /// FIFO Status (FIFO_STAT) register.
-/// Address: 0x15. Default: 0x02. Access: R. [cite: 2, 60]
 #[device_register(super::ENS220Common)]
-#[register(address = 0x15, mode = "r")] // Access: R [cite: 2]
+#[register(address = 0x15, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct FifoStat {
-    /// Fill level of the pressure FIFO (0-31). Value 0x1F for 31 or 32 elements. (Default: 0x0) [cite: 60]
+    /// Fill level of the pressure FIFO (0-31). Value 0x1F for 31 or 32 elements.
     #[bondrewd(bit_length = 5)]
-    #[register(default = 0x00)] // Bits 7:3, Default 0x0
+    #[register(default = 0x00)]
     pub fp_fill_level: u8,
 
-    /// FIFO full flag. Set when FIFO is enabled and full (32 elements). (Default: 0b0) [cite: 60]
-    #[register(default = false)] // Bit 2, Default 0b0
+    /// FIFO full flag. Set when FIFO is enabled and full (32 elements).
+    #[register(default = false)]
     pub fifo_full: bool,
 
-    /// FIFO empty flag. Set when FIFO is enabled and empty (0 elements). (Default: 0b1) [cite: 60]
-    #[register(default = true)] // Bit 1, Default 0b1
+    /// FIFO empty flag. Set when FIFO is enabled and empty (0 elements).
+    #[register(default = true)]
     pub fifo_empty: bool,
 
-    /// FIFO high threshold met. Set when enabled and #elements > FP_FILL_TH. (Default: 0b0) [cite: 60]
-    #[register(default = false)] // Bit 0, Default 0b0
+    /// FIFO high threshold met. Set when enabled and #elements > FP_FILL_TH.
+    #[register(default = false)]
     pub fifo_thresh_high_met: bool,
 }
 
 /// Interrupt Status (INT_STAT) register.
-/// Address: 0x16. Default: 0x00 (based on Table 31 bit defaults[cite: 64], Table 9 lists 0x08 [cite: 2]). Access: Rr.
-/// Reading this register clears all flags. [cite: 63]
+/// Reading this register clears all flags.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x16, mode = "r")] // Access: Rr [cite: 2]
+#[register(address = 0x16, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 1)]
 pub struct IntStat {
-    /// General interrupt flag (IA). Set if any enabled interrupt (bits 6:0) is active. (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 7, Default 0b0
+    /// General interrupt flag (IA). Set if any enabled interrupt (bits 6:0) is active.
+    #[register(default = false)]
     pub interrupt_active: bool,
 
-    /// Temperature ready status (TR). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 6, Default 0b0
+    /// Temperature ready status (TR).
+    #[register(default = false)]
     pub temp_ready_status: bool,
 
-    /// FIFO high threshold status (FH). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 5, Default 0b0
+    /// FIFO high threshold status (FH).
+    #[register(default = false)]
     pub fifo_high_thresh_status: bool,
 
-    /// FIFO full status (FF). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 4, Default 0b0
+    /// FIFO full status (FF).
+    #[register(default = false)]
     pub fifo_full_status: bool,
 
-    /// FIFO empty status (FE). (Default: 0b0, Note: Table 9 implies 0x08 reg default, i.e., this bit=1) [cite: 64, 2]
-    #[register(default = false)] // Bit 3, Default 0b0
+    /// FIFO empty status (FE).
+    #[register(default = false)]
     pub fifo_empty_status: bool,
 
-    /// Pressure ready status (PR). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 2, Default 0b0
+    /// Pressure ready status (PR).
+    #[register(default = false)]
     pub pressure_ready_status: bool,
 
-    /// Pressure high threshold status (PH). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 1, Default 0b0
+    /// Pressure high threshold status (PH).
+    #[register(default = false)]
     pub pressure_high_status: bool,
 
-    /// Pressure low threshold status (PL). (Default: 0b0) [cite: 64]
-    #[register(default = false)] // Bit 0, Default 0b0
+    /// Pressure low threshold status (PL).
+    #[register(default = false)]
     pub pressure_low_status: bool,
 }
 
 /// Pressure Output (PRESS_OUT) register.
-/// Address: 0x17-0x19. Default: 0x000000. Access: Rry. [cite: 2, 73]
-/// Contains a 24-bit unsigned integer representing pressure in 1/64 Pa. Little-endian. [cite: 65, 7]
-/// Reading extracts from FIFO if enabled (HP=1 required), else latest measurement. [cite: 65, 66, 67]
-/// Returns 0x000000 if FIFO is empty and enabled. [cite: 66]
+/// Contains a 24-bit unsigned integer representing pressure in 1/64 Pa.
+/// Reading extracts from FIFO if enabled (HP=1 required), else latest measurement.
+/// Returns 0x000000 if FIFO is empty and enabled.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x17, mode = "r")] // Access: Rry (Read, last value in ultra-low, y implies FIFO interaction) [cite: 2, 3]
+#[register(address = 0x17, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
 pub struct PressOut {
     /// Pressure value [23:0] in 1/64 Pa.
@@ -548,11 +509,10 @@ pub struct PressOut {
 }
 
 /// Temperature Output (TEMP_OUT) register.
-/// Address: 0x1A-0x1B. Default: 0x0000. Access: Rr. [cite: 2, 84]
-/// Contains a 16-bit unsigned integer representing temperature in 1/128 K. Little-endian. [cite: 75, 7]
-/// Returns the latest measurement result. [cite: 76]
+/// Contains a 16-bit unsigned integer representing temperature in 1/128 K.
+/// Returns the latest measurement result
 #[device_register(super::ENS220Common)]
-#[register(address = 0x1A, mode = "r")] // Access: Rr [cite: 2]
+#[register(address = 0x1A, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 2)]
 pub struct TempOut {
     /// Temperature value [15:0] in 1/128 K.
@@ -562,13 +522,12 @@ pub struct TempOut {
 }
 
 /// FIFO Pressure Output (PRESS_OUT_F) register.
-/// Address: 0x27-0x29. Default: 0x000000. Access: RFry. [cite: 2, 89]
-/// Same as PRESS_OUT, but supports wrap-around reads for multiple FIFO entries in one transaction. [cite: 86]
-/// HP bit in MODE_CFG must be 1 for FIFO access. [cite: 87] Little-endian. [cite: 7]
+/// Same as PRESS_OUT, but supports wrap-around reads for multiple FIFO entries in one transaction.
+/// HP bit in MODE_CFG must be 1 for FIFO access.
 #[device_register(super::ENS220Common)]
-#[register(address = 0x27, mode = "r")] // Access: RFry (Read FIFO, wraps, y implies specific conditions) [cite: 2, 3]
+#[register(address = 0x27, mode = "r")]
 #[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
-pub struct PressOutF {
+pub struct PressOutFifo {
     /// FIFO Pressure value [23:0] in 1/64 Pa.
     #[bondrewd(bit_length = 24)]
     #[register(default = 0x000000)]
