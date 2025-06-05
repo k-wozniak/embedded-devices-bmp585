@@ -231,10 +231,10 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         self.soft_reset(delay).await?;
 
         // Check the device ID to ensure we are communicating with the correct chip.
-        let part_id_reg = self.read_register::<PartId>().await.map_err(Error::Bus)?;
-        if part_id_reg.read_id() != address::DEVICE_IDENTIFIER {
-            return Err(Error::InvalidChip(part_id_reg.read_id()));
-        }
+        // let part_id_reg = self.read_register::<PartId>().await.map_err(Error::Bus)?;
+        // if part_id_reg.read_id() != address::DEVICE_IDENTIFIER {
+        //     return Err(Error::InvalidChip(part_id_reg.read_id()));
+        // }
 
         // Set the initial configuration after reset.
         self.configure(&self.config.clone(), delay).await?;
