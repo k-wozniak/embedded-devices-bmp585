@@ -332,6 +332,16 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         } else {
             mode_cfg.write_fifo_mode(config.fifo_mode_selection);
         }
+
+        if config.operation_mode == StandbyDuration::OneShot {
+            // For OneShot, we do not set START here; it will be set in measure().
+            mode_cfg.write_start(false);
+        } else {
+            // For Continuous or Pulsed, START should be set by the user after configuration.
+            mode_cfg.write_start(true);
+            mode_cfg.write_high_power(true);
+        }
+
         // START bit is not set here; user should set it to begin continuous/pulsed measurements.
         // For OneShot, measure() will set START.
         self.write_register(mode_cfg).await.map_err(Error::Bus)?;
