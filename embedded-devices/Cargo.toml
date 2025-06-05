@@ -53,6 +53,9 @@ texas_instruments-ina228 = []
 texas_instruments-tmp102 = []
 texas_instruments-tmp117 = []
 
+# ScioSense
+sciosense-ens220 = []
+
 # Sensirion
 sensirion-scd4x = []
 
