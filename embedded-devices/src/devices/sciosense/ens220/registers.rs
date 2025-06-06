@@ -500,7 +500,7 @@ pub struct IntStat {
 /// Returns 0x000000 if FIFO is empty and enabled.
 #[device_register(super::ENS220Common)]
 #[register(address = 0x17, mode = "r")]
-#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 3)]
+#[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 3)]
 pub struct PressOut {
     /// Pressure value [23:0] in 1/64 Pa.
     #[bondrewd(bit_length = 24)]
@@ -513,7 +513,7 @@ pub struct PressOut {
 /// Returns the latest measurement result
 #[device_register(super::ENS220Common)]
 #[register(address = 0x1A, mode = "r")]
-#[bondrewd(read_from = "msb0", default_endianness = "le", enforce_bytes = 2)]
+#[bondrewd(read_from = "msb0", default_endianness = "be", enforce_bytes = 2)]
 pub struct TempOut {
     /// Temperature value [15:0] in 1/128 K.
     #[bondrewd(bit_length = 16)]
