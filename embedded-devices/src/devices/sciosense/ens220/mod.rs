@@ -81,8 +81,8 @@ type ENS220I2cCodec = embedded_registers::i2c::codecs::OneByteRegAddrCodec;
 // ADDR_SHIFT = 2: Address AD[5:0] is in bits 7:2 of the command byte.
 // RW_BIT = 0: R/W flag is bit 0.
 // MSB_FIRST = true: Command byte and data are MSB first.
-// DUMMY_CYCLES = 1: One dummy byte needed for reads before data appears on SDO.
-type ENS220SpiCodec = embedded_registers::spi::codecs::SimpleCodec<1, 6, 2, 0, true, 1>;
+// DUMMY_CYCLES = 0: No dummy byte needed for reads before data appears on SDO.
+type ENS220SpiCodec = embedded_registers::spi::codecs::SimpleCodec<1, 6, 2, 0, true, 0>;
 
 /// All possible errors that may occur when using this device.
 #[derive(Debug, defmt::Format)]
