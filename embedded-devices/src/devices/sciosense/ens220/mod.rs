@@ -59,6 +59,7 @@
 //! - For `OperationMode::Continuous` or `OperationMode::Pulsed`, `configure()` sets the mode, and `measure()` reads the latest data. The user should ensure `MODE_CFG.START` is set appropriately after configuration for these modes.
 
 use embedded_devices_derive::{device, device_impl};
+
 use uom::num_rational::Rational32;
 use uom::si::pressure::pascal;
 use uom::si::rational32::{Pressure, ThermodynamicTemperature};
@@ -326,20 +327,11 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         // Configure MODE_CFG: Measurement enables, FIFO mode (HP and START handled separately)
         let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?; // Read current HP, START, RESET state
         mode_cfg.write_measurement_selection(config.measurement_selection);
+        mode_cfg.write_fifo_mode(config.fifo_mode_selection);
 
-        if config.pressure_moving_average != MovingAverageSamples::Samples1 {
-            mode_cfg.write_fifo_mode(FifoMode::MovingAverage);
-        } else {
-            mode_cfg.write_fifo_mode(config.fifo_mode_selection);
-        }
-
-        if config.operation_mode == StandbyDuration::OneShot {
-            // For OneShot, we do not set START here; it will be set in measure().
-            mode_cfg.write_start(false);
-        } else {
-            // For Continuous or Pulsed, START should be set by the user after configuration.
-            mode_cfg.write_start(true);
+        if config.operation_mode != StandbyDuration::OneShot {
             mode_cfg.write_high_power(true);
+            mode_cfg.write_start(true);
         }
 
         // START bit is not set here; user should set it to begin continuous/pulsed measurements.
@@ -384,7 +376,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
                     break;
                 }
 
-                delay.delay_ms(1).await; // Short delay before retrying
+                delay.delay_ms(2).await; // Short delay before retrying
             }
 
             if (self.config.measure_pressure_enable && !data_ready_p)
