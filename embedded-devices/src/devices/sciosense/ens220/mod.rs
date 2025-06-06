@@ -265,15 +265,16 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     /// This method is useful before reconfiguring the sensor or performing a reset.
     /// Changes Power Mode to High Power (HP=1) if not already set, to ensure all registers are writable.
     pub async fn set_idle<D: hal::delay::DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<I::Error>> {
-        // Read the current mode configuration.
-        let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?;
-
-        // Update required fields for idle mode.
-        mode_cfg.write_high_power(true);
-        mode_cfg.write_start(false);
-
-        // Set the new configuration.
-        self.write_register(mode_cfg).await.map_err(Error::Bus)?;
+        self.write_register(
+            ModeCfg::default()
+                .with_high_power(true) // Ensure High Power mode is enabled
+                .with_start(false)     // Set START to 0 for idle mode
+                .with_reset(false)     // RESET should not be set here
+                .with_measurement_selection(MeasurementSelection::PressureAndTemperature)
+                .with_fifo_mode(FifoMode::DirectPath), // Default FIFO mode
+        )
+        .await
+        .map_err(Error::Bus)?;
 
         // Short delay after enabling High Power mode (0.5ms required)
         delay.delay_us(500).await;
@@ -287,6 +288,9 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         config: &Configuration,
         delay: &mut D,
     ) -> Result<(), Error<I::Error>> {
+        // Reset the device to ensure a clean state.
+        self.soft_reset(delay).await?;
+
         // Ensure the sensor is in idle mode before applying configuration.
         self.set_idle(delay).await?;
 
@@ -295,6 +299,14 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             MeasCfg::default()
                 .with_p_conv(config.pressure_conv_time)
                 .with_pt_rate(config.pressure_temp_rate),
+        )
+        .await
+        .map_err(Error::Bus)?;
+
+        // Configure STBY_CFG: Standby duration (operation mode)
+        self.write_register(
+            StandbyCfg::default()
+                .with_standby_duration(config.operation_mode)
         )
         .await
         .map_err(Error::Bus)?;
@@ -313,25 +325,18 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             .await
             .map_err(Error::Bus)?;
 
-        // Configure STBY_CFG: Standby duration (operation mode)
-        self.write_register(StandbyCfg::default().with_standby_duration(config.operation_mode))
+        self.write_register(IntfCfg::default())
             .await
             .map_err(Error::Bus)?;
 
         // Configure MODE_CFG: Measurement enables, FIFO mode (HP and START handled separately)
-        let mut mode_cfg = self.read_register::<ModeCfg>().await.map_err(Error::Bus)?; // Read current HP, START, RESET state
-        mode_cfg.write_measurement_selection(config.measurement_selection);
-        mode_cfg.write_fifo_mode(config.fifo_mode_selection);
-
-        if config.operation_mode != StandbyDuration::OneShot {
-            mode_cfg.write_high_power(true);
-            mode_cfg.write_start(true);
-        }
-
-        // START bit is not set here; user should set it to begin continuous/pulsed measurements.
-        // For OneShot, measure() will set START.
-        self.write_register(mode_cfg).await.map_err(Error::Bus)?;
-
+        let mode_cfg = ModeCfg::default()
+            .with_high_power(true)
+            .with_fifo_mode(config.fifo_mode_selection);
+            .with_start(true)
+            .with_reset(false)
+            .with_measurement_selection(config.measurement_selection)
+            
         // Store the applied configuration
         self.config = config.clone();
 
