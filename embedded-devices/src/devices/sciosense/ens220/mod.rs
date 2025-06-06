@@ -149,10 +149,6 @@ pub struct Configuration {
     pub pressure_temp_rate: PressureTempRate,
     /// Enable/disable pressure & temperature measurements.
     pub measurement_selection: MeasurementSelection,
-    /// Enable pressure measurements in MODE_CFG. (Default: true)
-    pub measure_pressure_enable: bool,
-    /// Enable temperature measurements in MODE_CFG. (Default: true)
-    pub measure_temperature_enable: bool,
     /// Data path selection (Direct, FIFO, MovingAverage).
     /// Note: `pressure_moving_average` setting implies `FifoMode::MovingAverage`.
     /// If FIFO is desired, this should be set to `FifoMode::Fifo`.
@@ -169,8 +165,6 @@ impl Default for Configuration {
             pressure_conv_time: PressureConvTime::Ms8_2,         // Default P_CONV in MEAS_CFG
             pressure_temp_rate: PressureTempRate::Rate1,         // Default PT_RATE in MEAS_CFG
             measurement_selection: MeasurementSelection::PressureAndTemperature, // Default MEAS_P and MEAS_T in MODE_CFG
-            measure_pressure_enable: true,                                       // Default MEAS_P in MODE_CFG
-            measure_temperature_enable: true,                                    // Default MEAS_T in MODE_CFG
             fifo_mode_selection: FifoMode::DirectPath,                           // Default FIFO_MODE in MODE_CFG
         }
     }
@@ -361,26 +355,28 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             delay.delay_us(wait_us as u32).await; // Cast to u32, ensure it fits
 
             // Check DATA_STAT register for data ready flags
-            let mut data_ready_p = false;
-            let mut data_ready_t = false;
+            let mut data_ready = false;
             let max_retries = 10; // Max retries for checking data ready status
+
             for _ in 0..max_retries {
                 let data_stat = self.read_register::<DataStat>().await.map_err(Error::Bus)?;
-                data_ready_p = self.config.measure_pressure_enable && data_stat.read_pressure_ready();
-                data_ready_t = self.config.measure_temperature_enable && data_stat.read_temp_ready();
+                
+                data_ready = match self.config.measurement_selection {
+                    MeasurementSelection::PressureAndTemperature => {
+                        data_stat.read_pressure_ready() && data_stat.read_temp_ready()
+                    }
+                    MeasurementSelection::PressureOnly => data_stat.read_pressure_ready(),
+                    MeasurementSelection::TemperatureOnly => data_stat.read_temp_ready(),
+                };
 
-                let p_ok = !self.config.measure_pressure_enable || data_ready_p;
-                let t_ok = !self.config.measure_temperature_enable || data_ready_t;
-
-                if p_ok && t_ok {
+                if data_ready {
                     break;
                 }
 
-                delay.delay_ms(2).await; // Short delay before retrying
+                delay.delay_ms(1).await; // Short delay before retrying
             }
 
-            if (self.config.measure_pressure_enable && !data_ready_p)
-                || (self.config.measure_temperature_enable && !data_ready_t)
+            if !data_ready
             {
                 return Err(Error::DataNotReady);
             }
@@ -393,7 +389,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     fn calculate_measurement_delay_us(&self) -> u64 {
         let mut total_delay_us: u64 = 0;
 
-        if self.config.measure_pressure_enable {
+        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::PressureOnly {
             let p_conv_next_us: u64 = match self.config.pressure_conv_time {
                 PressureConvTime::Ms4_1 => 1_000,  // Next conversion 1ms
                 PressureConvTime::Ms8_2 => 2_000,  // Next conversion 2ms
@@ -405,7 +401,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             total_delay_us += (3 + ovsp_factor) * p_conv_next_us;
         }
 
-        if self.config.measure_temperature_enable {
+        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::TemperatureOnly {
             let t_conv_next_us: u64 = 1_000; // Additional temp conversion takes 1ms 
             let ovst_factor: u64 = 1 << self.config.temperature_oversampling as u8; // 2^OVST
             // Formula from Figure 10 interpretation: (3 + 2^OVST) * t_T_next_equivalent
@@ -418,28 +414,24 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
 
     /// Helper to read and convert pressure and temperature data.
     async fn read_sensor_data(&mut self) -> Result<Measurements, Error<I::Error>> {
-        let mut temp_val_raw: u16 = 0;
-        let mut press_val_raw: u32 = 0;
-
-        if self.config.measure_temperature_enable {
-            let temp_out = self.read_register::<TempOut>().await.map_err(Error::Bus)?;
-            temp_val_raw = temp_out.read_temperature_val();
-        }
-
-        if self.config.measure_pressure_enable {
+        let pressure = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::PressureOnly {
             let press_out = self.read_register::<PressOut>().await.map_err(Error::Bus)?;
-            press_val_raw = press_out.read_pressure_val();
-        }
-
-        // Convert raw values
-        // Temperature: val / 128.0 (raw is in 1/128 K)
-        let temperature_k = Rational32::new_raw(temp_val_raw as i32, 128);
-        // Pressure: val / 64.0 (raw is in 1/64 Pa)
-        let pressure_pa = Rational32::new_raw(press_val_raw as i32, 64);
-
-        Ok(Measurements {
-            temperature: Some(ThermodynamicTemperature::new::<kelvin>(temperature_k)),
-            pressure: Some(Pressure::new::<pascal>(pressure_pa)),
-        })
+            let press_val_raw = press_out.read_pressure_val();
+            // Pressure: val / 64.0 (raw is in 1/64 Pa)
+            Some(Pressure::new::<pascal>(Rational32::new_raw(press_val_raw as i32, 64)))
+        } else {
+            None
+        };
+        
+        let temperature = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::TemperatureOnly {
+            let temp_out = self.read_register::<TempOut>().await.map_err(Error::Bus)?;
+            let temp_val_raw = temp_out.read_temperature_val();
+            // Temperature: val / 128.0 (raw is in 1/128 K)
+            Some(ThermodynamicTemperature::new::<kelvin>(Rational32::new_raw(temp_val_raw as i32, 128)))
+        } else {
+            None
+        };
+        
+        Ok(Measurements { temperature, pressure })
     }
 }
