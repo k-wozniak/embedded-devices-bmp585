@@ -268,8 +268,8 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         self.write_register(
             ModeCfg::default()
                 .with_high_power(true) // Ensure High Power mode is enabled
-                .with_start(false)     // Set START to 0 for idle mode
-                .with_reset(false)     // RESET should not be set here
+                .with_start(false) // Set START to 0 for idle mode
+                .with_reset(false) // RESET should not be set here
                 .with_measurement_selection(MeasurementSelection::PressureAndTemperature)
                 .with_fifo_mode(FifoMode::DirectPath), // Default FIFO mode
         )
@@ -304,12 +304,9 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         .map_err(Error::Bus)?;
 
         // Configure STBY_CFG: Standby duration (operation mode)
-        self.write_register(
-            StandbyCfg::default()
-                .with_standby_duration(config.operation_mode)
-        )
-        .await
-        .map_err(Error::Bus)?;
+        self.write_register(StandbyCfg::default().with_standby_duration(config.operation_mode))
+            .await
+            .map_err(Error::Bus)?;
 
         // Configure OVS_CFG: Oversampling for P and T
         self.write_register(
@@ -325,18 +322,20 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             .await
             .map_err(Error::Bus)?;
 
-        self.write_register(IntfCfg::default())
-            .await
-            .map_err(Error::Bus)?;
+        self.write_register(IntfCfg::default()).await.map_err(Error::Bus)?;
 
-        // Configure MODE_CFG: Measurement enables, FIFO mode (HP and START handled separately)
-        let mode_cfg = ModeCfg::default()
-            .with_high_power(true)
-            .with_fifo_mode(config.fifo_mode_selection);
-            .with_start(true)
-            .with_reset(false)
-            .with_measurement_selection(config.measurement_selection)
-            
+        // Configure MODE_CFG
+        self.write_register(
+            ModeCfg::default()
+                .with_high_power(true)
+                .with_fifo_mode(config.fifo_mode_selection)
+                .with_start(true)
+                .with_reset(false)
+                .with_measurement_selection(config.measurement_selection),
+        )
+        .await
+        .map_err(Error::Bus)?;
+
         // Store the applied configuration
         self.config = config.clone();
 
@@ -365,7 +364,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
 
             for _ in 0..max_retries {
                 let data_stat = self.read_register::<DataStat>().await.map_err(Error::Bus)?;
-                
+
                 data_ready = match self.config.measurement_selection {
                     MeasurementSelection::PressureAndTemperature => {
                         data_stat.read_pressure_ready() && data_stat.read_temp_ready()
@@ -381,8 +380,7 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
                 delay.delay_ms(1).await; // Short delay before retrying
             }
 
-            if !data_ready
-            {
+            if !data_ready {
                 return Err(Error::DataNotReady);
             }
         }
@@ -394,7 +392,9 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
     fn calculate_measurement_delay_us(&self) -> u64 {
         let mut total_delay_us: u64 = 0;
 
-        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::PressureOnly {
+        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature
+            || self.config.measurement_selection == MeasurementSelection::PressureOnly
+        {
             let p_conv_next_us: u64 = match self.config.pressure_conv_time {
                 PressureConvTime::Ms4_1 => 1_000,  // Next conversion 1ms
                 PressureConvTime::Ms8_2 => 2_000,  // Next conversion 2ms
@@ -406,7 +406,9 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
             total_delay_us += (3 + ovsp_factor) * p_conv_next_us;
         }
 
-        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::TemperatureOnly {
+        if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature
+            || self.config.measurement_selection == MeasurementSelection::TemperatureOnly
+        {
             let t_conv_next_us: u64 = 1_000; // Additional temp conversion takes 1ms 
             let ovst_factor: u64 = 1 << self.config.temperature_oversampling as u8; // 2^OVST
             // Formula from Figure 10 interpretation: (3 + 2^OVST) * t_T_next_equivalent
@@ -419,7 +421,9 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
 
     /// Helper to read and convert pressure and temperature data.
     async fn read_sensor_data(&mut self) -> Result<Measurements, Error<I::Error>> {
-        let pressure = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::PressureOnly {
+        let pressure = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature
+            || self.config.measurement_selection == MeasurementSelection::PressureOnly
+        {
             let press_out = self.read_register::<PressOut>().await.map_err(Error::Bus)?;
             let press_val_raw = press_out.read_pressure_val();
             // Pressure: val / 64.0 (raw is in 1/64 Pa)
@@ -427,16 +431,21 @@ impl<I: embedded_registers::RegisterInterface> ENS220Common<I> {
         } else {
             None
         };
-        
-        let temperature = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature || self.config.measurement_selection == MeasurementSelection::TemperatureOnly {
+
+        let temperature = if self.config.measurement_selection == MeasurementSelection::PressureAndTemperature
+            || self.config.measurement_selection == MeasurementSelection::TemperatureOnly
+        {
             let temp_out = self.read_register::<TempOut>().await.map_err(Error::Bus)?;
             let temp_val_raw = temp_out.read_temperature_val();
             // Temperature: val / 128.0 (raw is in 1/128 K)
-            Some(ThermodynamicTemperature::new::<kelvin>(Rational32::new_raw(temp_val_raw as i32, 128)))
+            Some(ThermodynamicTemperature::new::<kelvin>(Rational32::new_raw(
+                temp_val_raw as i32,
+                128,
+            )))
         } else {
             None
         };
-        
+
         Ok(Measurements { temperature, pressure })
     }
 }
